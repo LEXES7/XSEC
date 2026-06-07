@@ -1,0 +1,23 @@
+# Example XSEC config. Copy to ".xsec.toml" at your project root.
+# CLI flags always override anything here.
+
+[scan]
+min_severity = "LOW"      # hide findings below this (INFO/LOW/MEDIUM/HIGH/CRITICAL)
+# ai = true               # turn on AI review by default
+# deps = true             # turn on dependency CVE scanning by default
+
+# AI provider — see docs/ai-providers.md. Free options: groq, openrouter.
+# [ai]
+# provider = "groq"
+# model = "llama-3.3-70b-versatile"
+# base_url = "http://localhost:1234/v1"   # only for provider = "openai-compatible"
+
+[ignore]
+paths = ["examples/", "tests/", "*.min.js"]   # skip these files
+rules = []                                     # rule IDs to never report
+
+# Silence one rule in one place, with a reason (kept for the record):
+# [[suppress]]
+# rule = "PY-EVAL"
+# path = "scripts/repl.py"
+# reason = "intentional REPL, reviewed"
