@@ -1,35 +1,73 @@
-# XSEC
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="XSEC logo">
+</p>
 
-A vulnerability scanner aimed at **AI-written code**. LLMs are great at
-producing code that runs and terrible at producing code that's safe — they
-reach for `shell=True`, `eval`, `verify=False`, and hardcoded keys because
-those are the shortest path to "it works". XSEC hunts for exactly those
-patterns.
+<h1 align="center">XSEC</h1>
 
-## Engines
+<p align="center">
+  <b>A vulnerability scanner and auto-fixer for AI-written code.</b><br>
+  Python · JavaScript/TypeScript · Java — with optional AI review and dependency CVE scanning.
+</p>
 
-XSEC is built around pluggable engines that all emit the same `Finding` shape:
+---
 
-| Engine | Status | What it does |
-| ------ | ------ | ------------ |
-| **SAST** | ✅ working | AST + regex static analysis for Python (injection, unsafe deserialization, weak crypto, hardcoded secrets, …) |
-| **Auto-refactor** | ✅ working | Rewrites unsafe code in place, safely (see below) |
-| **AI review** | ✅ working | Opt-in Claude review — semantic, cross-language, structured output |
-| **Dependency scan** | 🚧 planned | Checks declared dependencies against known CVEs |
+AI assistants write code that *runs*, not code that's *safe*. They reach for
+`eval`, `shell=True`, `innerHTML`, hardcoded keys, and outdated packages because
+those are the shortest path to "it works." **XSEC hunts for exactly those
+mistakes** — and can rewrite many of them for you.
+
+```bash
+xsec scan .                 # scan the current project
+xsec scan . --fix           # find issues AND auto-fix the safe ones
+xsec scan . --ai --deps     # add AI review + dependency CVE checks
+```
+
+## Why XSEC
+
+- 🛡️ **Finds real vulnerabilities** — command/SQL injection, unsafe
+  deserialization, weak crypto, hardcoded secrets, XSS sinks, SSRF, and more.
+- 🔧 **Fixes them for you** — AST-precise, semantics-preserving refactors, with
+  risky ones gated behind an explicit flag.
+- 🌐 **Multi-language** — Python (AST), JavaScript/TypeScript and Java (rules),
+  plus AI review for any language.
+- 🤖 **Free *or* paid AI** — use Claude (best quality) or a **free** provider
+  like Groq/OpenRouter. Off by default; your code stays local unless you opt in.
+- 📦 **Dependency scanning** — checks your packages against known CVEs (OSV).
+- 🔒 **Private & secure by design** — runs locally, encrypted key storage,
+  input-hardened against hostile repos, no network unless you ask.
+- 🧩 **Editor + CI ready** — VS Code extension, SARIF output, exit-code gating,
+  config files, and baselines for legacy codebases.
 
 ## Install
 
+Requires Python 3.10+.
+
 ```bash
-pip install -e .          # core (SAST)
-pip install -e ".[ai]"    # + AI review engine (anthropic SDK)
-pip install -e ".[dev]"   # + pytest
+pip install -e .                      # core scanner (Python/JS/TS/Java, offline)
+pip install -e ".[ai]"                # + Anthropic Claude AI review
+pip install -e ".[deps]"              # + dependency CVE scanning (OSV)
+pip install -e ".[secure]"            # + encrypted API-key storage (keyring)
+pip install -e ".[ai,deps,secure]"    # everything
 ```
+
+## Engines
+
+Every engine emits the same `Finding` shape, so all reports and the editor
+integration work identically regardless of which engine produced a result.
+
+| Engine | Status | What it does |
+| --- | --- | --- |
+| **SAST (Python)** | ✅ | AST + regex analysis — injection, unsafe deserialization, weak crypto, secrets, … |
+| **SAST (JS/TS, Java)** | ✅ | Rule-based analysis for the patterns AI tends to ship |
+| **Auto-fix** | ✅ | Rewrites unsafe code in place, safely (see below) |
+| **AI review** | ✅ | Opt-in semantic review via Claude or a free provider, any language |
+| **Dependency / CVE** | ✅ | Checks `requirements.txt` / `package.json` against OSV |
 
 ## Usage
 
 ```bash
 xsec scan path/to/code
-xsec scan examples/vulnerable.py          # try the bundled sample
+xsec scan examples/vulnerable.py          # try a bundled sample
 xsec scan . --min-severity MEDIUM         # hide low-severity noise
 xsec scan . --json                        # machine-readable output
 xsec scan . --sarif                       # GitHub code scanning format
@@ -37,13 +75,9 @@ xsec scan . --html report.html            # self-contained visual report
 xsec scan . --fail-on HIGH                # non-zero exit for CI gating
 ```
 
-The `--html` report is a single file with no external dependencies — open it
-in any browser to click through findings, severity cards, code snippets, and
-fix guidance. Great for eyeballing a scan or sharing results.
+### Auto-fix
 
-### Auto-refactor (the headline feature)
-
-XSEC doesn't just report — it can **rewrite the unsafe code for you**, safely:
+XSEC doesn't just report — it can **rewrite the unsafe code for you**:
 
 ```bash
 xsec scan . --fix                # apply only semantics-preserving fixes
@@ -59,28 +93,83 @@ re-parsed before being written — if a fix would break the file, it's discarded
 | `hashlib.md5/sha1` → `hashlib.sha256` | risky (digest changes) | `--unsafe-fixes` |
 | `debug=True` → `debug=False` | risky | `--unsafe-fixes` |
 
-Issues with no safe mechanical fix (`eval`, `os.system`, `shell=True`,
-`pickle`, hardcoded secrets) are reported with remediation guidance instead.
+Issues with no safe mechanical fix (`eval`, `os.system`, `pickle`, hardcoded
+secrets) are reported with remediation guidance instead.
 
-### AI review (opt-in, cross-language)
+### AI review — free or paid
 
-Rule-based SAST only finds patterns someone wrote a rule for. The AI engine
-reads code like a reviewer — catching broken auth, logic flaws, and unsafe
-data flows in **any** language. It's off by default; XSEC stays free and
-offline unless you ask for it.
+Rule-based scanning only finds patterns someone wrote a rule for. The AI engine
+reads code like a reviewer — catching broken auth, logic flaws, and unsafe data
+flows in **any** language. It's **opt-in**; XSEC stays free and offline unless
+you enable it.
+
+You choose the provider — best quality (paid) or free:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
-xsec scan . --ai                              # adds Claude review on top of SAST
-xsec scan . --ai --ai-model claude-sonnet-4-6 # cheaper for large trees
+# Free — get a key at console.groq.com, store it encrypted, then scan:
+xsec key set --provider groq
+xsec scan . --ai --ai-provider groq
+
+# Paid / best quality (Claude):
+xsec key set                 # stores your Anthropic key
+xsec scan . --ai
 ```
 
-Defaults to `claude-opus-4-8` (most capable — a missed vuln is expensive; drop
-to Sonnet via `--ai-model` when scanning big trees). Uses **adaptive thinking**
-with `effort: high`, **structured JSON output** (`output_config.format`), and
-prompt caching. Per-file API errors are reported without aborting the scan. If
-the key or `anthropic` package is missing, the engine is skipped with a note
-and the rest of the scan still runs.
+See [docs/ai-providers.md](docs/ai-providers.md) for the full comparison
+(quality, cost, privacy) and self-hosted/OpenAI-compatible setups. API keys are
+stored **encrypted in your OS keyring**, never in a file or your shell history.
+
+### Dependency / CVE scanning
+
+```bash
+xsec scan . --deps    # check requirements.txt / package.json against OSV
+```
+
+Sends only package names and versions to the free [OSV](https://osv.dev)
+database; opt-in like AI review.
+
+### Config file
+
+Drop an `.xsec.toml` at your project root to set defaults and quiet noise (see
+[.xsec.toml.example](.xsec.toml.example)):
+
+```toml
+[scan]
+min_severity = "MEDIUM"
+
+[ai]
+provider = "groq"
+
+[ignore]
+paths = ["tests/", "examples/"]
+rules = ["PY-WEAK-HASH"]
+```
+
+CLI flags always override the config file.
+
+### Baseline (adopt on an existing project)
+
+Snapshot today's findings once, then only see *new* issues going forward — ideal
+for legacy codebases and CI gates:
+
+```bash
+xsec baseline .            # writes .xsec-baseline.json (commit it)
+xsec scan . --baseline     # only reports findings not in the snapshot
+```
+
+## VS Code extension
+
+Inline squiggles, a status-bar shield, and one-click auto-fix as you work. See
+[vscode-extension/](vscode-extension/). Build it with `npm install && npm run compile`,
+then press **F5**, or package a `.vsix` with `vsce package`.
+
+## Security
+
+XSEC scans untrusted code, so it treats its own input as an attack surface —
+file-size and line-length limits, no symlink following, binary skipping, and
+ReDoS-resistant rules. The VS Code extension respects Workspace Trust and runs
+the CLI without a shell. See [SECURITY.md](SECURITY.md) for the full threat
+model.
 
 ## Develop
 
@@ -93,22 +182,32 @@ pytest
 
 ```
 xsec/
-  cli.py            CLI entry point and orchestration
-  models.py         Finding / Severity / ScanResult
-  discovery.py      file walking + ignore rules
-  engines/          sast (done), ai_review + deps (planned)
-  rules/python.py   the actual SAST rule definitions
-  report/console.py terminal + JSON output
+  cli.py                 command-line interface and orchestration
+  models.py              Finding / Severity / ScanResult
+  discovery.py           file walking + ignore rules
+  config.py              .xsec.toml parsing
+  baseline.py            snapshot / new-findings-only
+  safety.py              resource limits for untrusted input
+  parallel.py            process-pool scanning
+  secrets.py             encrypted per-provider API-key storage
+  engines/               sast, regex (js/java), deps, ai_review, openai_compatible
+  rules/                 python / javascript / java rule sets
+  report/                console, JSON, SARIF, HTML
+vscode-extension/        VS Code integration
 ```
 
 ## Roadmap
 
-- [x] SAST engine + console/JSON report + CI exit codes
-- [x] Auto-refactor engine (`--fix`, safe/risky confidence, re-parse guard)
-- [x] SARIF output for GitHub code scanning
-- [x] AI review engine (Claude) — opt-in, semantic, cross-language
-- [x] HTML report (self-contained, visual)
-- [ ] Dependency / CVE scan
+- [x] SAST: Python (AST), JS/TS, Java (rules)
+- [x] Auto-fix engine (safe/risky confidence, re-parse guard)
+- [x] AI review — Claude **and** free providers (Groq/OpenRouter)
+- [x] Dependency / CVE scanning (OSV)
+- [x] Reports: console / JSON / SARIF / HTML
+- [x] Config (`.xsec.toml`) + baseline
+- [x] VS Code extension · encrypted key storage · CI
 - [ ] Dataflow / taint tracking (source → sink)
-- [ ] Config file (`.xsec.toml`): suppressions, per-path rules, baseline
-- [ ] More languages: JS/TS, then Java
+- [ ] More languages (Go, Ruby, PHP, …)
+
+## License
+
+MIT — see [LICENSE](LICENSE).
