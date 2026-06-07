@@ -1,0 +1,94 @@
+{
+  "name": "xsec-vscode",
+  "displayName": "XSEC — AI Code Security",
+  "description": "Catch and auto-fix security vulnerabilities in AI-written code, live as you type. Python, JS/TS & Java.",
+  "version": "0.1.0",
+  "publisher": "xsec",
+  "icon": "icon.png",
+  "galleryBanner": { "color": "#0f1115", "theme": "dark" },
+  "keywords": ["security", "sast", "vulnerability", "ai", "linter"],
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Programming Languages"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LEXES7/XSEC.git",
+    "directory": "vscode-extension"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:java"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In untrusted folders XSEC will not run, because it executes the configured 'xsec' program. Trust the folder to enable scanning.",
+      "restrictedConfigurations": ["xsec.executable", "xsec.extraArgs"]
+    }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "xsec.scanWorkspace", "title": "XSEC: Scan Workspace" },
+      { "command": "xsec.scanFile", "title": "XSEC: Scan Current File" },
+      { "command": "xsec.fixFile", "title": "XSEC: Auto-fix Current File (safe)" },
+      { "command": "xsec.fixFileUnsafe", "title": "XSEC: Auto-fix Current File (include risky)" }
+    ],
+    "configuration": {
+      "title": "XSEC",
+      "properties": {
+        "xsec.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Master switch. When off, XSEC does no scanning at all."
+        },
+        "xsec.executable": {
+          "type": "string",
+          "default": "xsec",
+          "scope": "machine",
+          "markdownDescription": "Path to the xsec CLI. Defaults to `xsec` on your PATH. **Machine-scoped**: a project's `.vscode/settings.json` cannot change this, so opening someone else's repo can't redirect XSEC to a malicious binary."
+        },
+        "xsec.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan a file automatically when it is saved. Turn off to scan only via the commands."
+        },
+        "xsec.minSeverity": {
+          "type": "string",
+          "enum": ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
+          "default": "LOW",
+          "description": "Hide findings below this severity."
+        },
+        "xsec.enableAI": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Sends file contents to Anthropic's API** for AI review (`--ai`). Off by default; everything runs locally and offline unless you turn this on. Needs `ANTHROPIC_API_KEY` in your environment."
+        },
+        "xsec.enableAutofix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow XSEC to rewrite files when you use the auto-fix action. Turn off if you want scanning only, never edits."
+        },
+        "xsec.extraArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Extra arguments appended to every xsec scan invocation. **Machine-scoped** so a repo cannot inject its own arguments."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
