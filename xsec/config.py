@@ -23,9 +23,14 @@ CLI flags always win over the file. Parsing is pure and unit-tested.
 from __future__ import annotations
 
 import fnmatch
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# tomllib is stdlib on 3.11+; on 3.10 fall back to the tomli backport
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from xsec.models import Finding, Severity
 
