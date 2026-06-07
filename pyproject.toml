@@ -1,7 +1,7 @@
 [project]
 name = "xsec"
 version = "0.1.0"
-description = "Vulnerability scanner for AI-written code (SAST + AI review + dependency scan)"
+description = "Vulnerability scanner and auto-fixer for AI-written code (Python/JS/TS/Java SAST, AI review via Claude or free Groq/OpenRouter, dependency CVE scan)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -10,7 +10,9 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = ["anthropic>=0.40"]
-dev = ["pytest>=8.0"]
+deps = ["certifi>=2023.0"]
+secure = ["keyring>=24.0"]
+dev = ["pytest>=8.0", "keyring>=24.0"]
 
 [project.scripts]
 xsec = "xsec.cli:main"

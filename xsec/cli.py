@@ -12,20 +12,29 @@ from pathlib import Path
 from rich.console import Console
 
 from xsec import __version__
+from xsec.baseline import BASELINE_NAME, filter_new, load_baseline, save_baseline
+from xsec.config import Config, apply_config, load_config
 from xsec.discovery import discover
 from xsec.engines.ai_review import AiReviewEngine
+from xsec.engines.deps import DepsEngine
+from xsec.engines.openai_compatible import OpenAICompatibleEngine
+from xsec.engines.regex_engine import RegexEngine
 from xsec.engines.sast import SastEngine
 from xsec.fix import fix_files
 from xsec.models import ScanResult, Severity
 from xsec.report import console as report
 from xsec.report.html import to_html
 from xsec.report.sarif import to_sarif
+from xsec.secrets import clear_api_key, key_status, set_api_key
 
 # the AI engine works on any language, so widen discovery when --ai is on
 _AI_SUFFIXES = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rb",
     ".php", ".c", ".cpp", ".cs", ".rs",
 }
+
+# dependency manifests, matched by exact filename when --deps is on
+_MANIFEST_NAMES = {"requirements.txt", "package.json"}
 
 _SEVERITIES = [s.name for s in Severity]
 
@@ -54,8 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--html", type=Path, default=None, metavar="FILE",
                       help="Write a self-contained HTML report to FILE.")
     scan.add_argument(
-        "--min-severity", type=_parse_severity, default=Severity.INFO,
-        metavar="LEVEL", help="Hide findings below this severity.",
+        "--min-severity", type=_parse_severity, default=None,
+        metavar="LEVEL", help="Hide findings below this severity (default INFO, or .xsec.toml).",
     )
     scan.add_argument(
         "--fail-on", type=_parse_severity, default=None, metavar="LEVEL",
@@ -70,14 +79,128 @@ def build_parser() -> argparse.ArgumentParser:
         help="With --fix, also apply fixes that may change behavior.",
     )
     scan.add_argument(
-        "--ai", action="store_true",
+        "--ai", action="store_true", default=None,
         help="Enable Claude-powered semantic review (needs ANTHROPIC_API_KEY).",
     )
     scan.add_argument(
+        "--deps", action="store_true", default=None,
+        help="Check dependencies against the OSV vulnerability database (sends package list to osv.dev).",
+    )
+    scan.add_argument(
+        "--no-config", action="store_true",
+        help="Ignore any .xsec.toml config file.",
+    )
+    scan.add_argument(
+        "--baseline", nargs="?", const=BASELINE_NAME, default=None, metavar="FILE",
+        help="Hide findings recorded in a baseline file (default: .xsec-baseline.json).",
+    )
+    scan.add_argument(
         "--ai-model", default=None, metavar="MODEL",
-        help="Model for --ai (default: claude-opus-4-8).",
+        help="Model for --ai (default depends on provider).",
+    )
+    scan.add_argument(
+        "--ai-provider", default=None,
+        choices=["anthropic", "groq", "openrouter", "openai-compatible"],
+        help="AI provider for --ai. groq/openrouter have free tiers (default: anthropic).",
+    )
+    scan.add_argument(
+        "--ai-base-url", default=None, metavar="URL",
+        help="Base URL for --ai-provider openai-compatible.",
+    )
+
+    base = sub.add_parser(
+        "baseline",
+        help="Record current findings to a baseline file so future scans only show new ones.",
+    )
+    base.add_argument("path", type=Path, help="File or directory to scan.")
+    base.add_argument(
+        "--output", "-o", type=Path, default=Path(BASELINE_NAME), metavar="FILE",
+        help=f"Where to write the baseline (default: {BASELINE_NAME}).",
+    )
+    base.add_argument("--ai", action="store_true", default=None, help="Include AI findings.")
+    base.add_argument("--deps", action="store_true", default=None, help="Include dependency findings.")
+    base.add_argument("--no-config", action="store_true", help="Ignore any .xsec.toml.")
+    base.add_argument("--ai-model", default=None, metavar="MODEL", help="Model for --ai.")
+    base.add_argument(
+        "--ai-provider", default=None,
+        choices=["anthropic", "groq", "openrouter", "openai-compatible"],
+        help="AI provider for --ai (default: anthropic).",
+    )
+    base.add_argument("--ai-base-url", default=None, metavar="URL", help="Base URL for openai-compatible.")
+
+    key = sub.add_parser(
+        "key",
+        help="Manage AI provider API keys in your OS's encrypted keyring.",
+    )
+    key.add_argument(
+        "action", choices=["set", "clear", "status"],
+        help="set: store a key securely · clear: remove it · status: show where the key comes from.",
+    )
+    key.add_argument(
+        "--provider", default="anthropic",
+        choices=["anthropic", "groq", "openrouter", "openai-compatible"],
+        help="Which provider's key to manage (default: anthropic).",
     )
     return parser
+
+
+def _make_ai_engine(
+    use_ai: bool, provider: str, model: str | None, base_url: str | None,
+):
+    """Pick the right AI engine for the chosen provider."""
+    if provider == "anthropic":
+        return AiReviewEngine(enabled=use_ai, model=model)
+    return OpenAICompatibleEngine(
+        provider=provider, model=model, base_url=base_url, enabled=use_ai,
+    )
+
+
+def _collect_findings(
+    path: Path,
+    cfg: Config,
+    use_ai: bool,
+    use_deps: bool,
+    ai_model: str | None,
+    *,
+    ai_provider: str = "anthropic",
+    ai_base_url: str | None = None,
+    fix: bool = False,
+    unsafe_fixes: bool = False,
+    console: Console | None = None,
+) -> ScanResult:
+    """Discover files and run every enabled engine. Shared by scan/baseline."""
+    suffixes = _AI_SUFFIXES if use_ai else None
+    # when deps is on, also pick up dependency manifests by filename
+    names = _MANIFEST_NAMES if use_deps else None
+    files = discover(path, suffixes=suffixes, names=names)
+    # drop files matching ignore.paths before we even scan them
+    files = [f for f in files if not cfg.is_path_ignored(str(f))]
+    result = ScanResult(files_scanned=len(files))
+
+    if not files:
+        result.errors.append("No scannable source files found.")
+
+    # fix first so the findings we report reflect the fixed code
+    if fix:
+        py_files = [f for f in files if f.suffix == ".py"]
+        fixes = fix_files(py_files, include_risky=unsafe_fixes)
+        if console is not None:
+            _report_fixes(fixes, console, unsafe_fixes)
+
+    engines = [
+        SastEngine(),
+        RegexEngine(),
+        DepsEngine(enabled=use_deps),
+        _make_ai_engine(use_ai, ai_provider, ai_model, ai_base_url),
+    ]
+    for engine in engines:
+        ok, reason = engine.available()
+        if not ok:
+            result.errors.append(f"Skipped {engine.name} engine: {reason}")
+            continue
+        result.add(engine.analyze(files))
+        result.errors.extend(getattr(engine, "errors", []))
+    return result
 
 
 def run_scan(args: argparse.Namespace) -> int:
@@ -86,32 +209,39 @@ def run_scan(args: argparse.Namespace) -> int:
         console.print(f"[red]Path not found:[/] {args.path}")
         return 2
 
-    suffixes = _AI_SUFFIXES if args.ai else None
-    files = discover(args.path, suffixes=suffixes)
-    result = ScanResult(files_scanned=len(files))
+    # config file provides defaults; explicit CLI flags always win
+    cfg = Config() if args.no_config else load_config(args.path)
+    use_ai = args.ai if args.ai is not None else bool(cfg.ai)
+    use_deps = args.deps if args.deps is not None else bool(cfg.deps)
+    provider = args.ai_provider or cfg.ai_provider or "anthropic"
+    ai_model = args.ai_model or cfg.ai_model
+    base_url = args.ai_base_url or cfg.ai_base_url
+    if args.min_severity is not None:
+        min_sev = args.min_severity
+    elif cfg.min_severity is not None:
+        min_sev = cfg.min_severity
+    else:
+        min_sev = Severity.INFO
 
-    if not files:
-        result.errors.append("No scannable source files found.")
+    result = _collect_findings(
+        args.path, cfg, use_ai, use_deps, ai_model,
+        ai_provider=provider, ai_base_url=base_url,
+        fix=args.fix, unsafe_fixes=args.unsafe_fixes, console=console,
+    )
 
-    # fix first so the findings we report reflect the fixed code
-    if args.fix:
-        py_files = [f for f in files if f.suffix == ".py"]
-        fixes = fix_files(py_files, include_risky=args.unsafe_fixes)
-        _report_fixes(fixes, console, args.unsafe_fixes)
+    # apply config suppressions / ignored rules, then the severity floor
+    result.findings = apply_config(result.findings, cfg)
+    if min_sev > Severity.INFO:
+        result.findings = [f for f in result.findings if f.severity >= min_sev]
 
-    engines = [SastEngine(), AiReviewEngine(enabled=args.ai, model=args.ai_model)]
-    for engine in engines:
-        ok, reason = engine.available()
-        if not ok:
-            result.errors.append(f"Skipped {engine.name} engine: {reason}")
-            continue
-        result.add(engine.analyze(files))
-        result.errors.extend(getattr(engine, "errors", []))
-
-    if args.min_severity > Severity.INFO:
-        result.findings = [
-            f for f in result.findings if f.severity >= args.min_severity
-        ]
+    # hide findings already recorded in a baseline
+    if args.baseline is not None:
+        known = load_baseline(Path(args.baseline))
+        before = len(result.findings)
+        result.findings = filter_new(result.findings, known)
+        hidden = before - len(result.findings)
+        if hidden:
+            result.errors.append(f"{hidden} baselined finding(s) hidden.")
 
     if args.html:
         args.html.write_text(to_html(result), encoding="utf-8")
@@ -152,11 +282,67 @@ def _report_fixes(fixes, console: Console, unsafe: bool) -> None:
                 console.print(f"  [yellow]·[/] {ff.path}: {e.description}")
 
 
+def run_baseline(args: argparse.Namespace) -> int:
+    console = Console()
+    if not args.path.exists():
+        console.print(f"[red]Path not found:[/] {args.path}")
+        return 2
+
+    cfg = Config() if args.no_config else load_config(args.path)
+    use_ai = args.ai if args.ai is not None else bool(cfg.ai)
+    use_deps = args.deps if args.deps is not None else bool(cfg.deps)
+    provider = args.ai_provider or cfg.ai_provider or "anthropic"
+    ai_model = args.ai_model or cfg.ai_model
+    base_url = args.ai_base_url or cfg.ai_base_url
+
+    result = _collect_findings(
+        args.path, cfg, use_ai, use_deps, ai_model,
+        ai_provider=provider, ai_base_url=base_url,
+    )
+    # record the full, accepted set (config ignores still apply; severity floor doesn't)
+    result.findings = apply_config(result.findings, cfg)
+
+    count = save_baseline(result.findings, args.output)
+    console.print(
+        f"[green]Baseline written to[/] {args.output} "
+        f"([bold]{count}[/] finding(s) recorded).\n"
+        f"Future scans with [bold]--baseline[/] will hide these and show only new ones."
+    )
+    return 0
+
+
+def run_key(args: argparse.Namespace) -> int:
+    console = Console()
+    provider = args.provider
+    if args.action == "status":
+        console.print(key_status(provider))
+        return 0
+    if args.action == "clear":
+        ok, msg = clear_api_key(provider)
+        console.print(("[green]" if ok else "[red]") + msg + "[/]")
+        return 0 if ok else 1
+
+    # action == "set": prompt without echoing the key to the screen
+    import getpass
+    try:
+        value = getpass.getpass(f"Paste your {provider} API key (input hidden): ")
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Cancelled.[/]")
+        return 1
+    ok, msg = set_api_key(value, provider)
+    console.print(("[green]" if ok else "[red]") + msg + "[/]")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "scan":
         return run_scan(args)
+    if args.command == "baseline":
+        return run_baseline(args)
+    if args.command == "key":
+        return run_key(args)
     parser.print_help()
     return 0
 

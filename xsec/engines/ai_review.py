@@ -11,88 +11,25 @@ import json
 import os
 from pathlib import Path
 
+from xsec.engines._ai_common import (
+    FINDINGS_SCHEMA,
+    MAX_CHARS,
+    SYSTEM_PROMPT,
+    parse_findings,
+)
 from xsec.engines.base import Engine
-from xsec.models import Finding, Severity
+from xsec.models import Finding
+from xsec.secrets import get_api_key
 
 # default to the strongest model; drop to sonnet via --ai-model for big trees
 DEFAULT_MODEL = "claude-opus-4-8"
-# only send the head of very large files
-_MAX_CHARS = 48_000
 
-_SYSTEM_PROMPT = """\
-You are a senior application-security engineer reviewing source code for \
-vulnerabilities. The code was often written by an AI assistant, which tends to \
-introduce: command/SQL injection, unsafe deserialization, missing authn/authz \
-checks, hardcoded secrets, SSRF, path traversal, weak crypto, unvalidated \
-input reaching dangerous sinks, and race conditions.
+# kept as module-level names for backward compatibility (tests import these)
+_MAX_CHARS = MAX_CHARS
+_SYSTEM_PROMPT = SYSTEM_PROMPT
+_FINDINGS_SCHEMA = FINDINGS_SCHEMA
 
-Review the provided file and report only *genuine, actionable* security issues. \
-Do not report style, performance, or speculative concerns. For each issue give \
-the 1-based line number, a severity, a short title, a clear explanation of the \
-risk, and a concrete fix. Prefer precision over recall: a false positive costs \
-the user trust. If the file has no real security issues, return an empty list.\
-"""
-
-# structured-output schema. it needs additionalProperties:false and every key
-# required, so cwe/fix come back as "" sometimes - parse_findings handles that.
-_FINDINGS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "line": {"type": "integer"},
-                    "severity": {
-                        "type": "string",
-                        "enum": ["critical", "high", "medium", "low", "info"],
-                    },
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "fix": {"type": "string"},
-                    "cwe": {"type": "string"},
-                },
-                "required": ["line", "severity", "title", "description", "fix", "cwe"],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["findings"],
-    "additionalProperties": False,
-}
-
-_SEV_MAP = {
-    "critical": Severity.CRITICAL,
-    "high": Severity.HIGH,
-    "medium": Severity.MEDIUM,
-    "low": Severity.LOW,
-    "info": Severity.INFO,
-}
-
-
-def parse_findings(raw: dict, file: str) -> list[Finding]:
-    """Turn the model's JSON into Findings (skips junk items)."""
-    out: list[Finding] = []
-    for item in raw.get("findings", []):
-        if not isinstance(item, dict) or "title" not in item:
-            continue
-        sev = _SEV_MAP.get(str(item.get("severity", "")).lower(), Severity.MEDIUM)
-        cwe = item.get("cwe") or None
-        rule_id = f"AI-{cwe}" if cwe else "AI-REVIEW"
-        msg = item["title"]
-        if item.get("description"):
-            msg = f"{item['title']} - {item['description']}"
-        out.append(Finding(
-            rule_id=rule_id,
-            severity=sev,
-            message=msg,
-            file=file,
-            line=int(item.get("line", 0) or 0),
-            engine="ai",
-            fix=item.get("fix"),
-        ))
-    return out
+__all__ = ["AiReviewEngine", "parse_findings", "DEFAULT_MODEL"]
 
 
 class AiReviewEngine(Engine):
@@ -112,14 +49,19 @@ class AiReviewEngine(Engine):
             import anthropic  # noqa: F401
         except ImportError:
             return False, "anthropic package not installed (pip install 'xsec[ai]')"
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            return False, "ANTHROPIC_API_KEY not set"
+        if not get_api_key():
+            return False, (
+                "no Anthropic API key. Use Claude (run: xsec key set), or scan "
+                "free with Groq (--ai-provider groq, free key at console.groq.com)"
+            )
         return True, ""
 
     def _get_client(self):
         if self._client is None:
             import anthropic
-            self._client = anthropic.Anthropic()
+            # pass the key explicitly so it works from the OS keyring too,
+            # not just the environment variable
+            self._client = anthropic.Anthropic(api_key=get_api_key())
         return self._client
 
     def analyze(self, files: list[Path]) -> list[Finding]:

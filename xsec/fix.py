@@ -16,6 +16,8 @@ import enum
 from dataclasses import dataclass
 from pathlib import Path
 
+from xsec.safety import MAX_FILE_BYTES
+
 
 class Confidence(enum.Enum):
     SAFE = "safe"
@@ -141,9 +143,12 @@ def _plan_edits(data: bytes, tree: ast.AST) -> list[Edit]:
 def fix_file(path: Path, include_risky: bool = False) -> FileFix | None:
     """Fix one file. Returns None if nothing changed."""
     try:
+        if path.stat().st_size > MAX_FILE_BYTES:  # don't load huge files
+            return None
         data = path.read_bytes()
         tree = ast.parse(data.decode("utf-8", errors="replace"), filename=str(path))
-    except (OSError, SyntaxError):
+    except (OSError, SyntaxError, ValueError):
+        # ValueError covers ast.parse rejecting source with null bytes etc.
         return None
 
     edits = _plan_edits(data, tree)

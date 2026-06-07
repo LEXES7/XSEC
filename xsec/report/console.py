@@ -76,7 +76,8 @@ def _print_summary(result: ScanResult, console: Console) -> None:
 
 def _print_errors(result: ScanResult, console: Console) -> None:
     for err in result.errors:
-        console.print(f"[yellow]! {err}[/]")
+        # escape so text like "[ai]" isn't swallowed as Rich markup
+        console.print("! " + err, style="yellow", markup=False)
 
 
 def to_json(result: ScanResult) -> str:
