@@ -15,7 +15,9 @@ from xsec.engines._ai_common import (
     FINDINGS_SCHEMA,
     MAX_CHARS,
     SYSTEM_PROMPT,
+    AiReviewError,
     parse_findings,
+    review_many,
 )
 from xsec.engines.base import Engine
 from xsec.models import Finding
@@ -35,9 +37,12 @@ __all__ = ["AiReviewEngine", "parse_findings", "DEFAULT_MODEL"]
 class AiReviewEngine(Engine):
     name = "ai"
 
-    def __init__(self, enabled: bool = False, model: str | None = None) -> None:
+    def __init__(
+        self, enabled: bool = False, model: str | None = None, cache: bool = True,
+    ) -> None:
         self.enabled = enabled
         self.model = model or os.environ.get("XSEC_AI_MODEL") or DEFAULT_MODEL
+        self.cache = cache
         self._client = None
         # per-file failures, surfaced by the CLI without stopping the scan
         self.errors: list[str] = []
@@ -67,18 +72,18 @@ class AiReviewEngine(Engine):
     def analyze(self, files: list[Path]) -> list[Finding]:
         import anthropic
 
-        findings: list[Finding] = []
         client = self._get_client()
-        for path in files:
+
+        def review_one(path: Path, source: str) -> list[Finding]:
             try:
-                source = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            try:
-                findings.extend(self._review(client, path, source[:_MAX_CHARS]))
+                return self._review(client, path, source[:_MAX_CHARS])
             except anthropic.APIError as exc:
-                self.errors.append(f"AI review failed for {path}: {exc}")
-        return findings
+                raise AiReviewError(str(exc)) from exc
+
+        return review_many(
+            files, f"anthropic|{self.model}", review_one, self.errors,
+            use_cache=self.cache,
+        )
 
     def _review(self, client, path: Path, source: str) -> list[Finding]:
         user = f"File: {path}\n\n```\n{source}\n```"

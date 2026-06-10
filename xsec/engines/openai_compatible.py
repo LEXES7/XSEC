@@ -27,7 +27,9 @@ from xsec.engines._ai_common import (
     JSON_SHAPE_INSTRUCTION,
     MAX_CHARS,
     SYSTEM_PROMPT,
+    AiReviewError,
     parse_findings,
+    review_many,
 )
 from xsec.engines.base import Engine
 from xsec.models import Finding
@@ -115,12 +117,14 @@ class OpenAICompatibleEngine(Engine):
         model: str | None = None,
         base_url: str | None = None,
         enabled: bool = True,
+        cache: bool = True,
     ) -> None:
         self.enabled = enabled
         self.provider = provider
         preset = PROVIDERS.get(provider)
         self.base_url = (base_url or (preset.base_url if preset else "")).rstrip("/")
         self.model = model or (preset.default_model if preset else None)
+        self.cache = cache
         self.errors: list[str] = []
 
     def available(self) -> tuple[bool, str]:
@@ -141,23 +145,21 @@ class OpenAICompatibleEngine(Engine):
 
     def analyze(self, files: list[Path]) -> list[Finding]:
         key = get_api_key(self.provider)
-        findings: list[Finding] = []
-        for path in files:
+
+        def review_one(path: Path, source: str) -> list[Finding]:
             try:
-                source = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            try:
-                findings.extend(self._review_with_retry(key, path, source))
+                return self._review_with_retry(key, path, source)
             except urllib.error.HTTPError as exc:
                 # the provider explains the real reason in the response body;
                 # surface it instead of a bare "HTTP Error 403: Forbidden"
-                self.errors.append(
-                    f"AI review failed for {path}: {_http_error_detail(exc)}"
-                )
+                raise AiReviewError(_http_error_detail(exc)) from exc
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-                self.errors.append(f"AI review failed for {path}: {exc}")
-        return findings
+                raise AiReviewError(str(exc)) from exc
+
+        return review_many(
+            files, f"{self.provider}|{self.base_url}|{self.model}",
+            review_one, self.errors, use_cache=self.cache,
+        )
 
     def _review_with_retry(self, key: str, path: Path, source: str) -> list[Finding]:
         """Call the provider, retrying on 429 (rate limit) per its wait hint.

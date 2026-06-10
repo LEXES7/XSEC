@@ -111,6 +111,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--ai-base-url", default=None, metavar="URL",
         help="Base URL for --ai-provider openai-compatible.",
     )
+    scan.add_argument(
+        "--no-ai-cache", action="store_true",
+        help="Re-ask the model even for files whose cached AI results are current.",
+    )
 
     base = sub.add_parser(
         "baseline",
@@ -131,6 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="AI provider for --ai (default: anthropic).",
     )
     base.add_argument("--ai-base-url", default=None, metavar="URL", help="Base URL for openai-compatible.")
+    base.add_argument("--no-ai-cache", action="store_true", help="Bypass the AI result cache.")
 
     key = sub.add_parser(
         "key",
@@ -150,12 +155,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _make_ai_engine(
     use_ai: bool, provider: str, model: str | None, base_url: str | None,
+    cache: bool = True,
 ):
     """Pick the right AI engine for the chosen provider."""
     if provider == "anthropic":
-        return AiReviewEngine(enabled=use_ai, model=model)
+        return AiReviewEngine(enabled=use_ai, model=model, cache=cache)
     return OpenAICompatibleEngine(
         provider=provider, model=model, base_url=base_url, enabled=use_ai,
+        cache=cache,
     )
 
 
@@ -168,6 +175,7 @@ def _collect_findings(
     *,
     ai_provider: str = "anthropic",
     ai_base_url: str | None = None,
+    ai_cache: bool = True,
     fix: bool = False,
     unsafe_fixes: bool = False,
     console: Console | None = None,
@@ -195,7 +203,7 @@ def _collect_findings(
         SastEngine(),
         RegexEngine(),
         DepsEngine(enabled=use_deps),
-        _make_ai_engine(use_ai, ai_provider, ai_model, ai_base_url),
+        _make_ai_engine(use_ai, ai_provider, ai_model, ai_base_url, cache=ai_cache),
     ]
     for engine in engines:
         ok, reason = engine.available()
@@ -230,6 +238,7 @@ def run_scan(args: argparse.Namespace) -> int:
     result = _collect_findings(
         args.path, cfg, use_ai, use_deps, ai_model,
         ai_provider=provider, ai_base_url=base_url,
+        ai_cache=not args.no_ai_cache,
         fix=args.fix, unsafe_fixes=args.unsafe_fixes, console=console,
     )
 
@@ -307,6 +316,7 @@ def run_baseline(args: argparse.Namespace) -> int:
     result = _collect_findings(
         args.path, cfg, use_ai, use_deps, ai_model,
         ai_provider=provider, ai_base_url=base_url,
+        ai_cache=not args.no_ai_cache,
     )
     # record the full, accepted set (config ignores still apply; severity floor doesn't)
     result.findings = apply_config(result.findings, cfg)
