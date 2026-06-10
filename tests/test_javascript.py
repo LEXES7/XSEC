@@ -28,10 +28,18 @@ def _scan(tmp_path: Path, code: str, name: str = "sample.js") -> set[str]:
         ("const a = { rejectUnauthorized: false };", "JS-TLS-REJECT"),
         ('const k = "AKIAIOSFODNN7EXAMPLE";', "JS-SECRET-AWS"),
         ('const password = "hunter2horse";', "JS-SECRET-GENERIC"),
+        ("db.query(`SELECT * FROM users WHERE id = ${id}`);", "JS-SQL-CONCAT"),
+        ('db.query("SELECT * FROM users WHERE id = " + id);', "JS-SQL-CONCAT"),
+        ("<div dangerouslySetInnerHTML={{ __html: raw }} />", "JS-REACT-DANGEROUS-HTML"),
+        ('const t = "ghp_' + "a1B2" * 9 + '";', "JS-SECRET-GITHUB"),
     ],
 )
 def test_detects(tmp_path, code, expected_rule):
     assert expected_rule in _scan(tmp_path, code)
+
+
+def test_placeholder_secret_not_flagged(tmp_path):
+    assert "JS-SECRET-GENERIC" not in _scan(tmp_path, 'const password = "${DB_PASS}";')
 
 
 def test_typescript_extension_is_scanned(tmp_path):

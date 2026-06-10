@@ -9,19 +9,9 @@ hardcoded secrets.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 from xsec.models import Severity
-
-
-@dataclass
-class RegexRule:
-    rule_id: str
-    severity: Severity
-    pattern: re.Pattern[str]
-    message: str
-    fix: str
-
+from xsec.rules.common import RegexRule, secret_rules
 
 RULES: list[RegexRule] = [
     RegexRule(
@@ -74,24 +64,6 @@ RULES: list[RegexRule] = [
         "XML parser may be vulnerable to XXE if external entities aren't disabled.",
         "Disable DOCTYPE/external entities on the factory before parsing.",
     ),
-    RegexRule(
-        "JAVA-SECRET-GENERIC", Severity.HIGH,
-        re.compile(
-            r"""(?i)(password|passwd|secret|api[_-]?key|token|access[_-]?key)\s*=\s*['"][^'"]{6,}['"]"""
-        ),
-        "Possible hardcoded secret/credential.",
-        "Load secrets from configuration/environment, not source.",
-    ),
-    RegexRule(
-        "JAVA-SECRET-AWS", Severity.CRITICAL,
-        re.compile(r"AKIA[0-9A-Z]{16}"),
-        "Possible hardcoded AWS access key ID.",
-        "Move credentials to environment variables or a secrets manager.",
-    ),
-    RegexRule(
-        "JAVA-PRIVATE-KEY", Severity.CRITICAL,
-        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
-        "Private key material committed in source.",
-        "Remove the key, rotate it, and store keys outside the repo.",
-    ),
+    # hardcoded credentials look the same in every language; patterns are shared
+    *secret_rules("JAVA"),
 ]

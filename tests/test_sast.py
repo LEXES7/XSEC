@@ -37,6 +37,59 @@ def test_detects(tmp_path, code, expected_rule):
     assert expected_rule in _scan(tmp_path, code)
 
 
+@pytest.mark.parametrize(
+    "code, expected_rule",
+    [
+        ('cur.execute(f"SELECT * FROM users WHERE id = {uid}")', "PY-SQL-INJECTION"),
+        ('cur.execute("SELECT * FROM t WHERE x = %s" % x)', "PY-SQL-INJECTION"),
+        ('cur.execute("SELECT * FROM t WHERE id = {}".format(uid))', "PY-SQL-INJECTION"),
+        ('cur.execute("SELECT * FROM t WHERE id = " + uid)', "PY-SQL-INJECTION"),
+        ('import jwt\njwt.decode(t, verify=False)', "PY-JWT-NOVERIFY"),
+        ('import jwt\njwt.decode(t, options={"verify_signature": False})', "PY-JWT-NOVERIFY"),
+        ("import ssl\nctx = ssl._create_unverified_context()", "PY-SSL-NO-VERIFY"),
+        ("import ssl, urllib3\nurllib3.PoolManager(cert_reqs=ssl.CERT_NONE)", "PY-SSL-NO-VERIFY"),
+        ('tar.extractall("/tmp/out")', "PY-EXTRACTALL"),
+        ("import tempfile\np = tempfile.mktemp()", "PY-MKTEMP"),
+        ("mark_safe(html)", "PY-MARK-SAFE"),
+        ("from xml.dom import minidom\nminidom.parseString(data)", "PY-XXE"),
+        ("import random\ntoken = random.getrandbits(64)", "PY-INSECURE-RANDOM"),
+        ('app.run(host="0.0.0.0")', "PY-BIND-ALL"),
+        ('sock.bind(("0.0.0.0", 8080))', "PY-BIND-ALL"),
+        ('import hashlib\nhashlib.new("md5")', "PY-WEAK-HASH"),
+        ('GH = "ghp_' + "a1B2" * 9 + '"', "PY-SECRET-GITHUB"),
+        ('STRIPE = "sk_live_aB3dE6gH9jK2mN5pQ8sT1vW4"', "PY-SECRET-STRIPE"),
+        ('SLACK = "xoxb-123456789012-abcdefABCDEF"', "PY-SECRET-SLACK"),
+        ('G = "AIzaSy' + "a1B2" * 8 + 'x"', "PY-SECRET-GOOGLE"),
+    ],
+)
+def test_detects_new_rules(tmp_path, code, expected_rule):
+    assert expected_rule in _scan(tmp_path, code)
+
+
+@pytest.mark.parametrize(
+    "code, absent_rule",
+    [
+        # parameterized query: the safe pattern we recommend
+        ('cur.execute("SELECT * FROM t WHERE id = ?", (uid,))', "PY-SQL-INJECTION"),
+        # dynamic string that isn't SQL
+        ('cur.execute(f"PRAGMA table_info({name})")', "PY-SQL-INJECTION"),
+        # explicit "not used for security" declaration
+        ("import hashlib\nhashlib.md5(data, usedforsecurity=False)", "PY-WEAK-HASH"),
+        # extraction with the safe members filter
+        ('tar.extractall(path, filter="data")', "PY-EXTRACTALL"),
+        # signature actually verified
+        ('import jwt\njwt.decode(t, key, algorithms=["HS256"])', "PY-JWT-NOVERIFY"),
+        # placeholder values are not real secrets
+        ('password = "${DB_PASSWORD}"', "PY-SECRET-GENERIC"),
+        ('password = "<your-password-here>"', "PY-SECRET-GENERIC"),
+        # binding localhost is fine
+        ('app.run(host="127.0.0.1")', "PY-BIND-ALL"),
+    ],
+)
+def test_safe_variants_not_flagged(tmp_path, code, absent_rule):
+    assert absent_rule not in _scan(tmp_path, code)
+
+
 def test_clean_code_has_no_findings(tmp_path):
     code = """
         import subprocess
