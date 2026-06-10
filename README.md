@@ -25,14 +25,19 @@ xsec scan . --ai --deps     # add AI review + dependency CVE checks
 ## Why XSEC
 
 - 🛡️ **Finds real vulnerabilities** — command/SQL injection, unsafe
-  deserialization, weak crypto, hardcoded secrets, XSS sinks, SSRF, and more.
-- 🔧 **Fixes them for you** — AST-precise, semantics-preserving refactors, with
-  risky ones gated behind an explicit flag.
-- 🌐 **Multi-language** — Python (AST), JavaScript/TypeScript and Java (rules),
-  plus AI review for any language.
+  deserialization, weak crypto, hardcoded secrets (AWS/GitHub/Stripe/Slack/
+  Google/AI-provider keys), XSS sinks, XXE, JWT bypass, and more.
+- 🔧 **Fixes them for you** — AST-precise mechanical refactors, plus
+  **AI-powered rewrites** (`--ai-fix`) that are verified gone before they
+  ever touch disk.
+- 🌐 **Multi-language** — Python (AST), JavaScript/TypeScript and Java
+  (tree-sitter syntax-aware when installed, regex otherwise), plus AI review
+  for any language.
 - 🤖 **Free *or* paid AI** — use Claude (best quality) or a **free** provider
-  like Groq/OpenRouter. Off by default; your code stays local unless you opt in.
-- 📦 **Dependency scanning** — checks your packages against known CVEs (OSV).
+  like Groq/OpenRouter. Off by default; your code stays local unless you opt
+  in. Concurrent and **content-hash cached**: re-scans only bill changed files.
+- 📦 **Dependency scanning** — manifests *and* lockfiles (`package-lock.json`,
+  `poetry.lock`, `uv.lock`) checked against known CVEs (OSV).
 - 🔒 **Private & secure by design** — runs locally, encrypted key storage,
   input-hardened against hostile repos, no network unless you ask.
 - 🧩 **Editor + CI ready** — VS Code extension, SARIF output, exit-code gating,
@@ -47,7 +52,8 @@ pip install -e .                      # core scanner (Python/JS/TS/Java, offline
 pip install -e ".[ai]"                # + Anthropic Claude AI review
 pip install -e ".[deps]"              # + dependency CVE scanning (OSV)
 pip install -e ".[secure]"            # + encrypted API-key storage (keyring)
-pip install -e ".[ai,deps,secure]"    # everything
+pip install -e ".[treesitter]"        # + syntax-aware JS/TS/Java (fewer false positives)
+pip install -e ".[ai,deps,secure,treesitter]"   # everything
 ```
 
 ## Engines
@@ -57,9 +63,9 @@ integration work identically regardless of which engine produced a result.
 
 | Engine | Status | What it does |
 | --- | --- | --- |
-| **SAST (Python)** | ✅ | AST + regex analysis — injection, unsafe deserialization, weak crypto, secrets, … |
-| **SAST (JS/TS, Java)** | ✅ | Rule-based analysis for the patterns AI tends to ship |
-| **Auto-fix** | ✅ | Rewrites unsafe code in place, safely (see below) |
+| **SAST (Python)** | ✅ | AST + regex analysis — SQL injection, command injection, unsafe deserialization, JWT/SSL bypass, XXE, weak crypto, secrets, … |
+| **SAST (JS/TS, Java)** | ✅ | Syntax-aware via tree-sitter (optional) or rule-based — no false positives from comments/strings |
+| **Auto-fix** | ✅ | Mechanical AST rewrites + verified AI rewrites (see below) |
 | **AI review** | ✅ | Opt-in semantic review via Claude or a free provider, any language |
 | **Dependency / CVE** | ✅ | Checks `requirements.txt` / `package.json` against OSV |
 
@@ -82,10 +88,17 @@ XSEC doesn't just report — it can **rewrite the unsafe code for you**:
 ```bash
 xsec scan . --fix                # apply only semantics-preserving fixes
 xsec scan . --fix --unsafe-fixes # also apply fixes that may change behavior
+xsec scan . --ai-fix             # AI rewrites the file; verified before writing
 ```
 
-Fixes are AST-precise (never blind text replace) and every patched file is
-re-parsed before being written — if a fix would break the file, it's discarded.
+Mechanical fixes are AST-precise (never blind text replace) and every patched
+file is re-parsed before being written — if a fix would break the file, it's
+discarded.
+
+`--ai-fix` goes further: the AI provider rewrites each affected file, and the
+rewrite is only written if it **parses, keeps a sane size, removes at least
+one static finding on re-scan, and introduces none**. Applied fixes are shown
+as unified diffs.
 
 | Fix | Confidence | Applied by |
 | --- | --- | --- |
@@ -122,11 +135,13 @@ stored **encrypted in your OS keyring**, never in a file or your shell history.
 ### Dependency / CVE scanning
 
 ```bash
-xsec scan . --deps    # check requirements.txt / package.json against OSV
+xsec scan . --deps    # check manifests + lockfiles against OSV
 ```
 
-Sends only package names and versions to the free [OSV](https://osv.dev)
-database; opt-in like AI review.
+Reads `requirements.txt`, `package.json`, **and lockfiles**
+(`package-lock.json`, `poetry.lock`, `uv.lock` — every pinned transitive
+dependency). Sends only package names and versions to the free
+[OSV](https://osv.dev) database; opt-in like AI review.
 
 ### Config file
 
@@ -146,6 +161,15 @@ rules = ["PY-WEAK-HASH"]
 ```
 
 CLI flags always override the config file.
+
+To silence one finding at its source, use an inline comment instead:
+
+```python
+subprocess.run(cmd, shell=True)   # xsec: ignore[PY-SUBPROCESS-SHELL]
+```
+
+A bare `# xsec: ignore` (or `// xsec: ignore` in JS/Java) silences every rule
+on that line; the scan summary reports how many findings were suppressed.
 
 ### Baseline (adopt on an existing project)
 
@@ -187,26 +211,32 @@ xsec/
   discovery.py           file walking + ignore rules
   config.py              .xsec.toml parsing
   baseline.py            snapshot / new-findings-only
+  suppress.py            inline `xsec: ignore` comments
+  fix.py                 mechanical AST auto-fixes
+  aifix.py               AI-powered verified rewrites (--ai-fix)
   safety.py              resource limits for untrusted input
   parallel.py            process-pool scanning
   secrets.py             encrypted per-provider API-key storage
-  engines/               sast, regex (js/java), deps, ai_review, openai_compatible
-  rules/                 python / javascript / java rule sets
+  engines/               sast, treesitter/regex (js/java), deps, ai_review, openai_compatible
+  rules/                 python / javascript / java rule sets + shared secrets
   report/                console, JSON, SARIF, HTML
 vscode-extension/        VS Code integration
+website/                 product site (static, GitHub Pages-ready)
 ```
 
 ## Roadmap
 
-- [x] SAST: Python (AST), JS/TS, Java (rules)
+- [x] SAST: Python (AST), JS/TS/Java (tree-sitter / rules)
 - [x] Auto-fix engine (safe/risky confidence, re-parse guard)
-- [x] AI review — Claude **and** free providers (Groq/OpenRouter)
-- [x] Dependency / CVE scanning (OSV)
+- [x] **AI-powered auto-fix** (`--ai-fix`, verified rewrites)
+- [x] AI review — Claude **and** free providers (Groq/OpenRouter), concurrent + cached
+- [x] Dependency / CVE scanning (OSV) — manifests + lockfiles
 - [x] Reports: console / JSON / SARIF / HTML
-- [x] Config (`.xsec.toml`) + baseline
-- [x] VS Code extension · encrypted key storage · CI
+- [x] Config (`.xsec.toml`) + baseline + inline suppressions
+- [x] VS Code extension · encrypted key storage · CI · product site
 - [ ] Dataflow / taint tracking (source → sink)
 - [ ] More languages (Go, Ruby, PHP, …)
+- [ ] PyPI / VS Code Marketplace releases · GitHub Action
 
 ## License
 
