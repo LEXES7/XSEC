@@ -12,6 +12,7 @@ from pathlib import Path
 from rich.console import Console
 
 from xsec import __version__
+from xsec.aifix import fix_findings_with_ai
 from xsec.baseline import BASELINE_NAME, filter_new, load_baseline, save_baseline
 from xsec.config import Config, apply_config, load_config
 from xsec.discovery import discover
@@ -81,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--unsafe-fixes", action="store_true",
         help="With --fix, also apply fixes that may change behavior.",
+    )
+    scan.add_argument(
+        "--ai-fix", action="store_true",
+        help="Ask the AI provider to rewrite files so the findings are fixed "
+             "(rewrites are verified before writing; needs an AI key).",
     )
     scan.add_argument(
         "--ai", action="store_true", default=None,
@@ -217,6 +223,8 @@ def _collect_findings(
 
 def run_scan(args: argparse.Namespace) -> int:
     console = Console()
+    # progress/fix chatter goes to stderr when stdout carries machine output
+    info = Console(stderr=True) if (args.json or args.sarif) else console
     if not args.path.exists():
         console.print(f"[red]Path not found:[/] {args.path}")
         return 2
@@ -239,7 +247,7 @@ def run_scan(args: argparse.Namespace) -> int:
         args.path, cfg, use_ai, use_deps, ai_model,
         ai_provider=provider, ai_base_url=base_url,
         ai_cache=not args.no_ai_cache,
-        fix=args.fix, unsafe_fixes=args.unsafe_fixes, console=console,
+        fix=args.fix, unsafe_fixes=args.unsafe_fixes, console=info,
     )
 
     # apply config suppressions / ignored rules, then the severity floor
@@ -249,6 +257,19 @@ def run_scan(args: argparse.Namespace) -> int:
         result.errors.append(
             f"{inline_hidden} finding(s) suppressed by inline 'xsec: ignore' comments."
         )
+
+    if args.ai_fix and result.findings:
+        applied = _run_ai_fix(result.findings, provider, ai_model, base_url, info)
+        if applied:
+            # re-scan so the report reflects the rewritten code
+            result = _collect_findings(
+                args.path, cfg, use_ai, use_deps, ai_model,
+                ai_provider=provider, ai_base_url=base_url,
+                ai_cache=not args.no_ai_cache,
+            )
+            result.findings = apply_config(result.findings, cfg)
+            result.findings, _ = filter_suppressed(result.findings)
+
     if min_sev > Severity.INFO:
         result.findings = [f for f in result.findings if f.severity >= min_sev]
 
@@ -263,7 +284,7 @@ def run_scan(args: argparse.Namespace) -> int:
 
     if args.html:
         args.html.write_text(to_html(result), encoding="utf-8")
-        console.print(f"[green]HTML report written to[/] {args.html}")
+        info.print(f"[green]HTML report written to[/] {args.html}")
 
     if args.sarif:
         print(to_sarif(result))
@@ -276,6 +297,43 @@ def run_scan(args: argparse.Namespace) -> int:
         if any(f.severity >= args.fail_on for f in result.findings):
             return 1
     return 0
+
+
+def _run_ai_fix(
+    findings, provider: str, ai_model: str | None, base_url: str | None,
+    console: Console,
+) -> bool:
+    """Run the AI fixer over the findings. Returns True if any file changed."""
+    # availability gate: same key/package requirements as AI review
+    probe = _make_ai_engine(True, provider, ai_model, base_url)
+    ok, reason = probe.available()
+    if not ok:
+        console.print(f"[red]--ai-fix unavailable:[/] {reason}")
+        return False
+
+    console.print(f"\n[bold]AI fix:[/] asking {provider} to rewrite affected files…")
+    outcomes = fix_findings_with_ai(
+        findings, provider=provider, model=probe.model, base_url=base_url,
+    )
+
+    applied = False
+    for o in outcomes:
+        if o.applied:
+            applied = True
+            console.print(
+                f"  [green]✓[/] {o.path} - rewrote file "
+                f"({o.fixed_count} static finding(s) verified gone)"
+            )
+            for line in o.diff.splitlines():
+                style = ("green" if line.startswith("+") and not line.startswith("+++")
+                         else "red" if line.startswith("-") and not line.startswith("---")
+                         else "cyan" if line.startswith("@@") else "dim")
+                console.print(f"    {line}", style=style, markup=False, highlight=False)
+        else:
+            console.print(f"  [yellow]·[/] {o.path} - not fixed: {o.reason}")
+    if not outcomes:
+        console.print("  [dim]No fixable files (file-level findings only).[/]")
+    return applied
 
 
 def _report_fixes(fixes, console: Console, unsafe: bool) -> None:
