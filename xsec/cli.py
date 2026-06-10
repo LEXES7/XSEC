@@ -21,6 +21,7 @@ from xsec.engines.deps import DepsEngine
 from xsec.engines.openai_compatible import OpenAICompatibleEngine
 from xsec.engines.regex_engine import RegexEngine
 from xsec.engines.sast import SastEngine
+from xsec.engines.treesitter_engine import TreeSitterEngine
 from xsec.fix import fix_files
 from xsec.models import ScanResult, Severity
 from xsec.report import console as report
@@ -159,6 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _make_js_java_engine():
+    """Syntax-aware engine when tree-sitter is installed, else line regex."""
+    engine = TreeSitterEngine()
+    ok, _ = engine.available()
+    return engine if ok else RegexEngine()
+
+
 def _make_ai_engine(
     use_ai: bool, provider: str, model: str | None, base_url: str | None,
     cache: bool = True,
@@ -207,7 +215,7 @@ def _collect_findings(
 
     engines = [
         SastEngine(),
-        RegexEngine(),
+        _make_js_java_engine(),
         DepsEngine(enabled=use_deps),
         _make_ai_engine(use_ai, ai_provider, ai_model, ai_base_url, cache=ai_cache),
     ]
