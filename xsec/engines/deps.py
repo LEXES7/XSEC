@@ -2,8 +2,11 @@
 
 Most real-world breaches come from a known-vulnerable *version of a package*
 you depend on, not from your own code. This engine reads dependency manifests
-(requirements.txt, package.json) and checks each pinned version against the
-OSV.dev database (https://osv.dev), Google's free open vulnerability feed.
+(requirements.txt, package.json) and lockfiles (package-lock.json,
+poetry.lock, uv.lock) and checks each pinned version against the OSV.dev
+database (https://osv.dev), Google's free open vulnerability feed. Lockfiles
+are the best source: they pin the exact version of every transitive
+dependency, not just the ones you asked for.
 
 Like the AI engine it is **opt-in** (--deps): it sends your package names and
 versions to OSV over the network, so it stays off by default. No API key is
@@ -18,18 +21,18 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+# tomllib is stdlib on 3.11+; on 3.10 fall back to the tomli backport
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
 from xsec.engines.base import Engine
 from xsec.models import Finding, Severity
 from xsec.netutil import ssl_context
 
 _OSV_URL = "https://api.osv.dev/v1/querybatch"
 _TIMEOUT = 30
-
-# manifest filename -> OSV ecosystem name
-_MANIFESTS = {
-    "requirements.txt": "PyPI",
-    "package.json": "npm",
-}
 
 
 @dataclass
@@ -77,6 +80,88 @@ def parse_package_json(text: str, manifest: str = "package.json") -> list[Dep]:
             if version:
                 deps.append(Dep(name, version, "npm", manifest))
     return deps
+
+
+def parse_package_lock(text: str, manifest: str = "package-lock.json") -> list[Dep]:
+    """Parse an npm lockfile - every transitive dep with its exact version."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    deps: list[Dep] = []
+    packages = data.get("packages")
+    if isinstance(packages, dict):  # lockfile v2/v3
+        for key, info in packages.items():
+            if not key or not isinstance(info, dict):  # "" is the root project
+                continue
+            if info.get("link"):
+                continue
+            # "node_modules/a/node_modules/b" -> "b"; scoped names keep their @scope/
+            name = key.split("node_modules/")[-1]
+            version = info.get("version")
+            if name and isinstance(version, str) and version:
+                deps.append(Dep(name, version, "npm", manifest))
+        return deps
+
+    def walk(block: object) -> None:  # lockfile v1: nested "dependencies"
+        if not isinstance(block, dict):
+            return
+        for name, info in block.items():
+            if not isinstance(info, dict):
+                continue
+            version = info.get("version")
+            if isinstance(version, str) and version:
+                deps.append(Dep(name, version, "npm", manifest))
+            walk(info.get("dependencies"))
+
+    walk(data.get("dependencies"))
+    return deps
+
+
+def parse_python_lock(text: str, manifest: str) -> list[Dep]:
+    """Parse poetry.lock / uv.lock: TOML with [[package]] name/version entries."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return []
+
+    deps: list[Dep] = []
+    for entry in data.get("package", []):
+        if not isinstance(entry, dict):
+            continue
+        name, version = entry.get("name"), entry.get("version")
+        if isinstance(name, str) and isinstance(version, str) and name and version:
+            deps.append(Dep(name, version, "PyPI", manifest))
+    return deps
+
+
+# manifest filename -> parser(text, manifest_path)
+MANIFEST_PARSERS = {
+    "requirements.txt": parse_requirements,
+    "package.json": parse_package_json,
+    "package-lock.json": parse_package_lock,
+    "poetry.lock": parse_python_lock,
+    "uv.lock": parse_python_lock,
+}
+
+
+def dedupe(deps: list[Dep]) -> list[Dep]:
+    """Drop repeat (name, version, ecosystem) entries across manifests.
+
+    A project with both requirements.txt and uv.lock would otherwise report
+    every shared package twice.
+    """
+    seen: set[tuple[str, str, str]] = set()
+    out: list[Dep] = []
+    for d in deps:
+        key = (d.name.lower(), d.version, d.ecosystem)
+        if key not in seen:
+            seen.add(key)
+            out.append(d)
+    return out
 
 
 def _clean_npm_version(spec: object) -> str:
@@ -151,18 +236,15 @@ class DepsEngine(Engine):
     def _collect_deps(self, files: list[Path]) -> list[Dep]:
         deps: list[Dep] = []
         for path in files:
-            ecosystem = _MANIFESTS.get(path.name)
-            if not ecosystem:
+            parser = MANIFEST_PARSERS.get(path.name)
+            if parser is None:
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            if path.name == "requirements.txt":
-                deps.extend(parse_requirements(text, str(path)))
-            elif path.name == "package.json":
-                deps.extend(parse_package_json(text, str(path)))
-        return deps
+            deps.extend(parser(text, str(path)))
+        return dedupe(deps)
 
     def _query_osv(self, deps: list[Dep]) -> dict:
         queries = [
