@@ -26,6 +26,7 @@ from xsec.report import console as report
 from xsec.report.html import to_html
 from xsec.report.sarif import to_sarif
 from xsec.secrets import clear_api_key, key_status, set_api_key
+from xsec.suppress import filter_suppressed
 
 # the AI engine works on any language, so widen discovery when --ai is on
 _AI_SUFFIXES = {
@@ -33,8 +34,11 @@ _AI_SUFFIXES = {
     ".php", ".c", ".cpp", ".cs", ".rs",
 }
 
-# dependency manifests, matched by exact filename when --deps is on
-_MANIFEST_NAMES = {"requirements.txt", "package.json"}
+# dependency manifests/lockfiles, matched by exact filename when --deps is on
+_MANIFEST_NAMES = {
+    "requirements.txt", "package.json",
+    "package-lock.json", "poetry.lock", "uv.lock",
+}
 
 _SEVERITIES = [s.name for s in Severity]
 
@@ -231,6 +235,11 @@ def run_scan(args: argparse.Namespace) -> int:
 
     # apply config suppressions / ignored rules, then the severity floor
     result.findings = apply_config(result.findings, cfg)
+    result.findings, inline_hidden = filter_suppressed(result.findings)
+    if inline_hidden:
+        result.errors.append(
+            f"{inline_hidden} finding(s) suppressed by inline 'xsec: ignore' comments."
+        )
     if min_sev > Severity.INFO:
         result.findings = [f for f in result.findings if f.severity >= min_sev]
 
@@ -301,6 +310,7 @@ def run_baseline(args: argparse.Namespace) -> int:
     )
     # record the full, accepted set (config ignores still apply; severity floor doesn't)
     result.findings = apply_config(result.findings, cfg)
+    result.findings, _ = filter_suppressed(result.findings)
 
     count = save_baseline(result.findings, args.output)
     console.print(
