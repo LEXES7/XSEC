@@ -15,7 +15,7 @@ deps = ["certifi>=2023.0"]
 secure = ["keyring>=25.7.0"]
 treesitter = [
     "tree-sitter>=0.22",
-    "tree-sitter-javascript>=0.21",
+    "tree-sitter-javascript>=0.25.0",
     "tree-sitter-typescript>=0.21",
     "tree-sitter-java>=0.23.5",
 ]
