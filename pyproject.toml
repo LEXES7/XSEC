@@ -11,7 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = ["anthropic>=0.40"]
-deps = ["certifi>=2023.0"]
+deps = ["certifi>=2026.5.20"]
 secure = ["keyring>=25.7.0"]
 treesitter = [
     "tree-sitter>=0.22",
