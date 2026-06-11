@@ -49,6 +49,31 @@ jobs:
       - name: Scan source
         run: xsec scan xsec --fail-on HIGH
 
+  code-scanning:
+    name: Upload self-scan to GitHub code scanning
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install (with syntax-aware JS/Java scanning)
+        run: pip install -e ".[treesitter]"
+
+      - name: Scan source and emit SARIF
+        run: xsec scan xsec --sarif > xsec.sarif
+
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: xsec.sarif
+          category: xsec-self-scan
+
   extension:
     name: VS Code extension build
     runs-on: ubuntu-latest

@@ -224,11 +224,21 @@ function runXsec(scanArgs: string[], cwd: string): Promise<XsecResult> {
 // A trimmed environment for the child process. We keep PATH/HOME (needed to
 // find and run the tool) and pass ANTHROPIC_API_KEY only when AI is enabled,
 // rather than leaking the whole parent environment.
+//
+// On Windows, Python and its network stack break without the system vars
+// below (SYSTEMROOT in particular is required for winsock), so those are
+// forwarded when present.
+const PASSTHROUGH_VARS = [
+  "PATH", "HOME",
+  "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
+  "APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP", "TMP",
+] as const;
+
 function childEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH,
-    HOME: process.env.HOME,
-  };
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of PASSTHROUGH_VARS) {
+    if (process.env[key]) env[key] = process.env[key];
+  }
   if (cfg().get<boolean>("enableAI", false) && process.env.ANTHROPIC_API_KEY) {
     env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   }
