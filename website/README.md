@@ -12,3 +12,6 @@ npm run preview    # serve the production build
 
 Honors `prefers-reduced-motion`: the 3D scene and pinned animations are
 skipped and all content renders statically.
+
+Deployed automatically to GitHub Pages on every push to `main` that touches
+`website/` — see `.github/workflows/deploy-site.yml`.
