@@ -69,7 +69,7 @@ jobs:
       - name: Scan source and emit SARIF
         run: xsec scan xsec --sarif > xsec.sarif
 
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: xsec.sarif
           category: xsec-self-scan
