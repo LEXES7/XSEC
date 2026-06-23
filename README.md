@@ -1,12 +1,20 @@
 <p align="center">
-  <img src="assets/icon.png" width="120" alt="XSEC logo">
+  <img src="assets/banner.svg" alt="XSEC - vulnerability scanner and auto-fixer for AI-written code" width="100%">
 </p>
 
-<h1 align="center">XSEC</h1>
+<p align="center">
+  <img src="https://img.shields.io/badge/languages-Python%20%C2%B7%20JS%2FTS%20%C2%B7%20Java-6366f1?style=flat-square" alt="languages">
+  <img src="https://img.shields.io/badge/AI-Claude%20or%20free%20Groq%2FOpenRouter-06b6d4?style=flat-square" alt="AI providers">
+  <img src="https://img.shields.io/badge/python-3.10%2B-22d3ee?style=flat-square" alt="python 3.10+">
+  <img src="https://img.shields.io/badge/license-MIT-94a3b8?style=flat-square" alt="MIT license">
+</p>
 
 <p align="center">
-  <b>A vulnerability scanner and auto-fixer for AI-written code.</b><br>
-  Python · JavaScript/TypeScript · Java — with optional AI review and dependency CVE scanning.
+  <a href="#install">Install</a> &nbsp;·&nbsp;
+  <a href="#usage">Usage</a> &nbsp;·&nbsp;
+  <a href="#ai-review--free-or-paid">AI review</a> &nbsp;·&nbsp;
+  <a href="#security">Security</a> &nbsp;·&nbsp;
+  <a href="docs/ai-providers.md">Docs</a>
 </p>
 
 ---
@@ -24,23 +32,23 @@ xsec scan . --ai --deps     # add AI review + dependency CVE checks
 
 ## Why XSEC
 
-- 🛡️ **Finds real vulnerabilities** — command/SQL injection, unsafe
+- **Finds real vulnerabilities** — command/SQL injection, unsafe
   deserialization, weak crypto, hardcoded secrets (AWS/GitHub/Stripe/Slack/
   Google/AI-provider keys), XSS sinks, XXE, JWT bypass, and more.
-- 🔧 **Fixes them for you** — AST-precise mechanical refactors, plus
+- **Fixes them for you** — AST-precise mechanical refactors, plus
   **AI-powered rewrites** (`--ai-fix`) that are verified gone before they
   ever touch disk.
-- 🌐 **Multi-language** — Python (AST), JavaScript/TypeScript and Java
+- **Multi-language** — Python (AST), JavaScript/TypeScript and Java
   (tree-sitter syntax-aware when installed, regex otherwise), plus AI review
   for any language.
-- 🤖 **Free *or* paid AI** — use Claude (best quality) or a **free** provider
+- **Free or paid AI** — use Claude (best quality) or a **free** provider
   like Groq/OpenRouter. Off by default; your code stays local unless you opt
   in. Concurrent and **content-hash cached**: re-scans only bill changed files.
-- 📦 **Dependency scanning** — manifests *and* lockfiles (`package-lock.json`,
+- **Dependency scanning** — manifests *and* lockfiles (`package-lock.json`,
   `poetry.lock`, `uv.lock`) checked against known CVEs (OSV).
-- 🔒 **Private & secure by design** — runs locally, encrypted key storage,
+- **Private and secure by design** — runs locally, encrypted key storage,
   input-hardened against hostile repos, no network unless you ask.
-- 🧩 **Editor + CI ready** — VS Code extension, SARIF output, exit-code gating,
+- **Editor and CI ready** — VS Code extension, SARIF output, exit-code gating,
   config files, and baselines for legacy codebases.
 
 ## Install
@@ -61,13 +69,13 @@ pip install -e ".[ai,deps,secure,treesitter]"   # everything
 Every engine emits the same `Finding` shape, so all reports and the editor
 integration work identically regardless of which engine produced a result.
 
-| Engine | Status | What it does |
-| --- | --- | --- |
-| **SAST (Python)** | ✅ | AST + regex analysis — SQL injection, command injection, unsafe deserialization, JWT/SSL bypass, XXE, weak crypto, secrets, … |
-| **SAST (JS/TS, Java)** | ✅ | Syntax-aware via tree-sitter (optional) or rule-based — no false positives from comments/strings |
-| **Auto-fix** | ✅ | Mechanical AST rewrites + verified AI rewrites (see below) |
-| **AI review** | ✅ | Opt-in semantic review via Claude or a free provider, any language |
-| **Dependency / CVE** | ✅ | Checks `requirements.txt` / `package.json` against OSV |
+| Engine | What it does |
+| --- | --- |
+| **SAST (Python)** | AST + regex analysis — SQL injection, command injection, unsafe deserialization, JWT/SSL bypass, XXE, weak crypto, secrets, … |
+| **SAST (JS/TS, Java)** | Syntax-aware via tree-sitter (optional) or rule-based — no false positives from comments/strings |
+| **Auto-fix** | Mechanical AST rewrites + verified AI rewrites (see below) |
+| **AI review** | Opt-in semantic review via Claude or a free provider, any language |
+| **Dependency / CVE** | Checks manifests and lockfiles against OSV |
 
 ## Usage
 

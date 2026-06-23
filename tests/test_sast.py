@@ -57,8 +57,10 @@ def test_detects(tmp_path, code, expected_rule):
         ('sock.bind(("0.0.0.0", 8080))', "PY-BIND-ALL"),
         ('import hashlib\nhashlib.new("md5")', "PY-WEAK-HASH"),
         ('GH = "ghp_' + "a1B2" * 9 + '"', "PY-SECRET-GITHUB"),
-        ('STRIPE = "sk_live_aB3dE6gH9jK2mN5pQ8sT1vW4"', "PY-SECRET-STRIPE"),
-        ('SLACK = "xoxb-123456789012-abcdefABCDEF"', "PY-SECRET-SLACK"),
+        # fake secrets are assembled from fragments so the literal never appears
+        # in source — otherwise GitHub secret scanning flags our own test data.
+        ('STRIPE = "sk' + '_live_' + "aB3dE" * 5 + '"', "PY-SECRET-STRIPE"),
+        ('SLACK = "xo' + 'xb-' + "123456789012-abcdefABCDEF" + '"', "PY-SECRET-SLACK"),
         ('G = "AIzaSy' + "a1B2" * 8 + 'x"', "PY-SECRET-GOOGLE"),
     ],
 )
