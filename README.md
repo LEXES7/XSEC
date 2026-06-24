@@ -189,6 +189,34 @@ xsec baseline .            # writes .xsec-baseline.json (commit it)
 xsec scan . --baseline     # only reports findings not in the snapshot
 ```
 
+## GitHub Action
+
+Add XSEC to any repository's CI and have findings appear in the Security tab.
+Findings are tagged with their [CWE](https://cwe.mitre.org) id, so code scanning
+groups them by weakness automatically.
+
+```yaml
+# .github/workflows/security.yml
+name: security
+on: [push, pull_request]
+permissions:
+  contents: read
+  security-events: write   # to upload SARIF
+jobs:
+  xsec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: LEXES7/XSEC@main
+        with:
+          path: .
+          fail-on: HIGH      # fail the build on HIGH+ findings
+          deps: "true"       # also scan dependencies for CVEs
+```
+
+Every report format carries CWE data: SARIF emits a full CWE taxonomy, and
+`--json` adds a `"cwe"` field to each finding.
+
 ## VS Code extension
 
 Inline squiggles, a status-bar shield, and one-click auto-fix as you work. See
@@ -225,6 +253,7 @@ xsec/
   safety.py              resource limits for untrusted input
   parallel.py            process-pool scanning
   secrets.py             encrypted per-provider API-key storage
+  cwe.py                 rule-id to CWE weakness mapping
   engines/               sast, treesitter/regex (js/java), deps, ai_review, openai_compatible
   rules/                 python / javascript / java rule sets + shared secrets
   report/                console, JSON, SARIF, HTML
@@ -239,12 +268,13 @@ website/                 product site (static, GitHub Pages-ready)
 - [x] **AI-powered auto-fix** (`--ai-fix`, verified rewrites)
 - [x] AI review — Claude **and** free providers (Groq/OpenRouter), concurrent + cached
 - [x] Dependency / CVE scanning (OSV) — manifests + lockfiles
-- [x] Reports: console / JSON / SARIF / HTML
+- [x] Reports: console / JSON / SARIF / HTML, all CWE-tagged
 - [x] Config (`.xsec.toml`) + baseline + inline suppressions
 - [x] VS Code extension · encrypted key storage · CI · product site
+- [x] Reusable GitHub Action (`LEXES7/XSEC@main`)
 - [ ] Dataflow / taint tracking (source → sink)
 - [ ] More languages (Go, Ruby, PHP, …)
-- [ ] PyPI / VS Code Marketplace releases · GitHub Action
+- [ ] PyPI / VS Code Marketplace releases
 
 ## License
 

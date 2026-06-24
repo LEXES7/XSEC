@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from xsec.cwe import cwe_tag
 from xsec.models import ScanResult, Severity
 
 
@@ -86,7 +87,11 @@ def to_json(result: ScanResult) -> str:
         "errors": result.errors,
         "summary": {str(k): v for k, v in result.counts().items() if v},
         "findings": [
-            {**dataclasses.asdict(f), "severity": str(f.severity)}
+            {
+                **dataclasses.asdict(f),
+                "severity": str(f.severity),
+                "cwe": cwe_tag(f.rule_id),
+            }
             for f in result.sorted()
         ],
     }
